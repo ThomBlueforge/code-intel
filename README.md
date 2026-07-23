@@ -1,163 +1,168 @@
 # Code Intelligence Platform
 
-A local-first system that ingests any software repository and produces a
-queryable knowledge base combining **deterministic static analysis** with an
-**optional AI enrichment** layer. It is designed to serve as a context-retrieval
-backend for AI coding agents and for human questions about a codebase.
+A local-first system that turns any software repository into a queryable
+knowledge base, combining **deterministic static analysis** with an **optional
+AI enrichment** layer. It runs entirely offline and is designed both as a
+context-retrieval backend for AI coding agents and as an exploration tool for
+engineers.
+
+## Highlights
+
+- **Deterministic by default** — ingestion, Tree-sitter parsing, symbol and
+  dependency graphs, and search all run with no model and no network.
+- **Multi-language** — Python, JavaScript, TypeScript, Go, Rust, Java, C, C++,
+  C#, and PHP.
+- **Hybrid retrieval** — blends symbol, keyword, graph-proximity, vector, and
+  metadata signals into a single ranked result.
+- **Optional AI layer** — summaries, grounded Q&A, and semantic embeddings via
+  any OpenAI-compatible endpoint. Fully separable; the model never invents facts.
+- **Provenance everywhere** — every relationship and finding carries its origin
+  (static analysis vs. LLM inference) and a confidence score.
+- **Three ways in** — a CLI, a FastAPI HTTP service, and a browser UI.
 
 ## Core principle
 
 Deterministic analysis (facts) and AI reasoning (understanding) are always
-separate layers. Parsing, symbols, and the structural graph must work fully
-with AI enrichment disabled. The LLM never parses source structure and never
-searches the repository directly — all access goes through the retrieval layer.
+separate layers. Parsing, symbols, and the structural graph work fully with the
+AI layer disabled. The LLM never parses source structure and never searches the
+repository directly — all access goes through the retrieval layer.
 
-## Status
+## Architecture
 
-Built incrementally, phase by phase. Each phase ships working code, tests, a
-`docs/PHASE_N.md` note, and a runnable capability. See `docs/` for per-phase
-notes.
+Full details in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Storage
+boundaries are strict and never mixed:
 
-| Phase | Capability | State |
-|-------|------------|-------|
-| 1 | Repository ingestion (incremental manifest) | ✅ shipped |
-| 2 | Tree-sitter parsing → symbols queryable by path | ✅ shipped |
-| 3 | Structural knowledge graph (NetworkX, swappable) | ✅ shipped |
-| 4 | Symbol index (exact/prefix/fuzzy search) | ✅ shipped |
-| 5 | Dependency analysis & health report (`stats`) | ✅ shipped |
-| 6 | AI enrichment (optional LLM layer) | ✅ shipped |
-| 7 | Embedding pipeline (logical units) | ✅ shipped |
-| 8 | Vector store (embedded Qdrant) | ✅ shipped |
-| 9 | Keyword search (ripgrep + Python fallback) | ✅ shipped |
-| 10 | Hybrid retrieval (all five sources) | ✅ shipped |
-| 11 | Hierarchical summaries (`explain`) | ✅ shipped |
-| 12 | Grounded Q&A with citations (`ask`) | ✅ shipped |
-| 13 | Repository intelligence (`intel`, diffable) | ✅ shipped |
-| 14 | Full CLI surface | ✅ shipped |
-| 15 | FastAPI HTTP API (`serve`) | ✅ shipped |
-| 16 | Incremental indexing + propagation | ✅ shipped |
-| 17 | Configurable local LLM client | ✅ shipped |
-| 18 | Parallel parsing, progress, resumable | ✅ shipped |
-| 19 | Documentation (`docs/`) | ✅ shipped |
-| 20 | Test suite (unit + integration + API) | ✅ shipped |
-| 21 | Ontology & pattern detection | ✅ shipped |
-| 22 | Change impact analysis (`impact`) | ✅ shipped |
+| Store | Owns |
+|-------|------|
+| **SQLite** | metadata and deterministic relational facts |
+| **NetworkX** | the structural graph (behind a swappable interface) |
+| **Qdrant** | embedding vectors (embedded local mode) |
 
 ## Requirements
 
-- Python 3.12 (managed via [`uv`](https://docs.astral.sh/uv/))
+- Python 3.12, managed via [`uv`](https://docs.astral.sh/uv/)
+- Optional: Node.js 20+ and `pnpm` — only to build the browser UI
+- Optional: `ripgrep` on `PATH` — keyword search falls back to pure Python
+- Optional: a local OpenAI-compatible LLM endpoint — only for the AI layer
 
-## Setup
+## Install
 
 ```bash
 uv sync
 ```
 
-## Usage (Phase 1)
-
-Index a repository (creates `<repo>/.code-intel/index.db` by default):
+## Quick start
 
 ```bash
+# Index a repository (creates <repo>/.code-intel/index.db by default)
 uv run code-intel index /path/to/repo
+
+# Re-running only touches files whose contents changed
+uv run code-intel index /path/to/repo
+
+# Explore
+uv run code-intel symbols  /path/to/repo
+uv run code-intel stats    /path/to/repo
+uv run code-intel search   --keyword TODO --path /path/to/repo -C 2
+uv run code-intel retrieve "authentication flow" --path /path/to/repo
+uv run code-intel graph    Indexer --path /path/to/repo
+uv run code-intel impact   authenticate --path /path/to/repo
 ```
 
-Re-running only touches files whose contents changed:
+## CLI
+
+| Command | Purpose |
+|---------|---------|
+| `index` / `update` | Build or incrementally refresh the index |
+| `symbols` / `symbol` | List or search symbols |
+| `search` | Keyword / regex search |
+| `retrieve` | Hybrid retrieval |
+| `graph` | Structural neighbourhood around a symbol |
+| `stats` | Dependency and health report |
+| `explain` | Hierarchical summaries |
+| `ask` | Grounded Q&A with citations |
+| `impact` | Change-impact analysis |
+| `intel` | Repository findings (diffable) |
+| `enrich` / `embed` | Optional AI layers |
+| `serve` / `ui` | Run the HTTP API and browser UI |
+| `config` / `health` / `delete` | Inspect config, verify a store, remove one |
+
+Run `uv run code-intel --help` for the full surface. Override the database
+location with `--db` or `CODE_INTEL_DB`.
+
+## Browser UI & HTTP API
+
+The whole pipeline is reachable over HTTP, with a browser UI served from the same
+process — the terminal is only needed to launch it.
 
 ```bash
-uv run code-intel index /path/to/repo          # first run: everything added
-uv run code-intel index /path/to/repo          # second run: all unchanged
+uv sync --extra serve      # adds uvicorn
+uv run code-intel ui       # serve API + UI and open the browser
 ```
 
-Machine-readable output and store health:
-
-```bash
-uv run code-intel index /path/to/repo --json
-uv run code-intel health /path/to/repo
-```
-
-Inspect extracted symbols (Phase 2):
-
-```bash
-uv run code-intel symbols /path/to/repo                      # type breakdown
-uv run code-intel symbols /path/to/repo --file src/app.py    # symbols in a file
-```
-
-Explore, analyse, search, and retrieve (Phases 3–10):
-
-```bash
-uv run code-intel graph Indexer --path .                     # graph neighbourhood
-uv run code-intel symbol authenticate --path . --type function
-uv run code-intel stats /path/to/repo                        # dependency & health report
-uv run code-intel search --keyword TODO --path . -C 2        # keyword/regex search
-uv run code-intel retrieve "authentication flow" --path .    # hybrid retrieval
-
-# Optional AI layers (need a local OpenAI-compatible endpoint for enrich):
-uv run code-intel enrich /path/to/repo --limit 50
-uv run code-intel embed  /path/to/repo                       # vectors → local Qdrant
-```
-
-Override the database location:
-
-```bash
-uv run code-intel index /path/to/repo --db /tmp/my-index.db
-# or
-CODE_INTEL_DB=/tmp/my-index.db uv run code-intel index /path/to/repo
-```
-
-## Browser UI / HTTP API
-
-The whole pipeline is reachable over HTTP, and a browser UI is served from the
-same process so you only need the terminal to launch it. `uvicorn` is an optional
-dependency:
-
-```bash
-uv sync --extra serve         # or: uv add uvicorn
-uv run code-intel ui          # serve API + UI and open the browser
-uv run code-intel serve       # serve without opening a browser
-```
-
-- The UI is served at `http://127.0.0.1:8000/` when a built frontend is present
-  (packaged under `code_intel/webui/`, overridable via `CODE_INTEL_UI_DIR`). Until
-  the frontend is built, a placeholder page is shown and the API is fully usable.
-- All endpoints are namespaced under `/api` (interactive schema at `/docs`).
-  Indexing, updating, enriching, and embedding run as **background jobs**: the POST
-  returns a job id, and you poll `GET /api/jobs/{id}` for progress and the result.
+- UI at `http://127.0.0.1:8000/`; interactive API schema at `/docs`.
+- All endpoints are namespaced under `/api`. Indexing, updating, enriching, and
+  embedding run as **background jobs** — the request returns a job id and the
+  client polls `GET /api/jobs/{id}` for progress and the result.
 - Indexed repositories are remembered in `~/.code-intel/registry.json` (override
-  `CODE_INTEL_REGISTRY`) so the UI can list them without re-typing paths.
+  with `CODE_INTEL_REGISTRY`).
 
-The browser UI is a Next.js app in `web/`, built to a static export and served by
-FastAPI (no Node process at runtime). To (re)build it into the package:
+The UI covers the full pipeline: a repository dashboard (browse-to-add,
+index/update/delete with live progress), an overview (stats, languages, findings),
+search (keyword / symbol / hybrid), a symbols browser and source viewer, an
+interactive graph explorer, grounded Q&A, explain, impact, a filterable
+intelligence view, and the optional enrich/embed runners.
+
+### Building the UI
+
+The frontend is a Next.js app in [`web/`](web/), statically exported and served by
+FastAPI (no Node process at runtime). The generated bundle is not committed; build
+it into the package with:
 
 ```bash
 cd web && pnpm install && pnpm build:webui   # → src/code_intel/webui/
 ```
 
-Surface: a repository dashboard (browse-to-add, index/update/delete with live
-progress), a per-repository overview (stats, languages, findings with provenance),
-search (keyword / symbol / hybrid), a symbols browser, a source viewer, an
-interactive graph explorer, grounded Q&A (`ask`), explain, impact, an intelligence
-findings view (filter by origin/category/confidence), and AI-layer runners
-(enrich/embed with progress) plus the effective config. Every relationship and
-finding shows its origin (static vs LLM) and confidence.
+Until the UI is built, the API is fully usable on its own and `/` returns 404.
 
-Frontend dev loop (hot reload; never needed just to run the tool): `uv run
-code-intel serve` in one terminal, `cd web && pnpm dev` in another (it proxies to
-`:8000`). Frontend smoke test: `PLAYWRIGHT_BASE_URL=http://127.0.0.1:8000 pnpm e2e`
-against a running server.
+Frontend dev loop (hot reload): run `uv run code-intel serve` in one terminal and
+`cd web && pnpm dev` in another (it proxies to `:8000`).
+
+## Configuration
+
+Everything is configurable; nothing is hardcoded. Key environment variables:
+
+| Variable | Purpose |
+|----------|---------|
+| `CODE_INTEL_DB` | Override the SQLite database path |
+| `CODE_INTEL_REGISTRY` | Override the repository registry path |
+| `CODE_INTEL_UI_DIR` | Override the served UI directory |
+| `CODE_INTEL_LLM_BASE_URL` / `_MODEL` / `_API_KEY` / … | OpenAI-compatible LLM settings |
+
+`uv run code-intel config` prints the effective configuration.
 
 ## Development
 
 ```bash
-uv run pytest          # tests
-uv run ruff check src tests
-uv run mypy
+uv run pytest                          # tests
+uv run ruff check src tests            # lint
+uv run mypy                            # type-check (strict)
+cd web && pnpm typecheck && pnpm e2e   # frontend checks (e2e needs a running server)
 ```
 
-## Storage boundaries (do not violate)
+## Project layout
 
-- **SQLite** — metadata and deterministic relational facts.
-- **NetworkX** — structural graph (later phase).
-- **Qdrant** — embeddings / semantic store (later phase).
+```
+src/code_intel/      # library, CLI, and HTTP API
+  ingestion/  parsing/  graph/  symbols/  dependencies/
+  retrieval/  understanding/  intelligence/  enrichment/
+  embeddings/ vectorstore/ keyword_search/ llm/ storage/
+  cli/  api/  webui/   (webui holds the generated UI)
+tests/               # unit, integration, and API tests
+web/                 # Next.js frontend (source)
+docs/                # architecture and component notes
+```
 
-Each store owns exactly one kind of data. The graph is never stored in Qdrant;
-embeddings are never stored in SQLite.
+## License
+
+Released under the [MIT License](LICENSE). Copyright © 2026 Thomas Ben.
