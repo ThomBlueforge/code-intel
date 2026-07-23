@@ -1,0 +1,26 @@
+{
+  "name": "code-intel-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "sync": "node scripts/sync-webui.mjs",
+    "build:webui": "next build && node scripts/sync-webui.mjs",
+    "typecheck": "tsc --noEmit",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "next": "^16.2.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.0",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "typescript": "^5"
+  }
+}
