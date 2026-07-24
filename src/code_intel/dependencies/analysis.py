@@ -24,8 +24,24 @@ from code_intel.storage.repositories import FileStore, SymbolStore
 
 _CALLABLE_TYPES = frozenset({"function", "method"})
 _ENTRY_NAMES = frozenset({"main"})
-_MIN_DUPLICATE_SPAN = 2  # lines; ignore trivial one-liners as "duplicates"
+# Implicitly invoked and never called by name: a class constructor runs via
+# ``new`` (JS/TS/Java/C#), so it is never dead even with no name-based callers.
+_IMPLICIT_METHODS = frozenset({"constructor"})
+_MIN_DUPLICATE_SPAN = 4  # lines; only flag non-trivial identical bodies
 _TOP_N = 10
+
+# Decorators that do NOT imply external invocation. Any other decorator
+# (``@property``, ``@app.command``, ``@router.get``, ``@pytest.fixture``, …)
+# means the symbol is called by a framework/attribute access that name-based
+# resolution can't see, so it must not be reported as dead code.
+_INERT_DECORATORS = frozenset({"staticmethod", "classmethod"})
+
+# Hotspot resolution guards. Call edges are resolved by name (see callgraph.py),
+# so a call to ``get`` links to every symbol named ``get``. For names shared by
+# many symbols (``get``/``set``/``map``/…) that resolution is ambiguous and the
+# inbound count is a collision artifact, not a real shared-utility signal.
+_HOTSPOT_MIN_NAME_LEN = 3  # skip 1-2 char names (``t``/``e`` from minified code)
+_HOTSPOT_MAX_HOMONYMS = 3  # skip names shared by more than this many symbols
 
 _PY_CANDIDATES = ("{mod}.py", "{mod}/__init__.py")
 _JS_EXTS = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
@@ -70,6 +86,7 @@ class DependencyAnalyzer:
         call_graph = build_call_graph(symbols)
         call_in = in_degree_counter(call_graph)
         module_graph, import_in, import_edges = self._module_graph(files)
+        reference_counts = self._reference_counts(files)
 
         return DependencyReport(
             files=len(files),
@@ -79,7 +96,7 @@ class DependencyAnalyzer:
             import_edges=import_edges,
             duplicate_implementations=self._duplicates(repository_id),
             circular_dependencies=_cycles(module_graph),
-            dead_code_candidates=_dead_code(symbols, call_in),
+            dead_code_candidates=_dead_code(symbols, call_in, reference_counts),
             orphan_modules=_orphans(files, module_graph, symbols),
             entry_points=_entry_points(symbols),
             shared_utilities=_shared_utilities(symbols, call_in),
@@ -120,6 +137,17 @@ class DependencyAnalyzer:
         except OSError:
             return None
 
+    def _reference_counts(self, files: list[FileRecord]) -> Counter[str]:
+        """Repo-wide count of every identifier occurrence, for dead-code liveness."""
+        counts: Counter[str] = Counter()
+        for file in files:
+            if not self._rel.supports_references(file.language):
+                continue
+            source = self._read(file.path)
+            if source is not None:
+                counts.update(self._rel.extract_reference_names(file.language, source))
+        return counts
+
     def _language_breakdown(self, repository_id: str) -> dict[str, int]:
         rows = self._conn.execute(
             "SELECT language, COUNT(*) AS n FROM files WHERE repository_id = ? "
@@ -131,7 +159,8 @@ class DependencyAnalyzer:
     def _duplicates(self, repository_id: str) -> list[DuplicateGroup]:
         rows = self._conn.execute(
             "SELECT COUNT(*) AS c, GROUP_CONCAT(name) AS names, GROUP_CONCAT(path) AS paths "
-            "FROM symbols WHERE repository_id = ? AND (end_line - start_line) >= ? "
+            "FROM symbols WHERE repository_id = ? AND type IN ('function', 'method') "
+            "AND (end_line - start_line) >= ? "
             "GROUP BY hash HAVING c > 1 ORDER BY c DESC LIMIT ?",
             (repository_id, _MIN_DUPLICATE_SPAN, _TOP_N),
         ).fetchall()
@@ -177,17 +206,29 @@ def _cycles(graph: nx.DiGraph) -> list[list[str]]:
     return cycles
 
 
-def _dead_code(symbols: list[Symbol], call_in: Counter[str]) -> list[str]:
+def _dead_code(
+    symbols: list[Symbol], call_in: Counter[str], reference_counts: Counter[str]
+) -> list[str]:
+    # A name appears once per definition site in the identifier scan; anything
+    # beyond that is a use (JSX element, prop, member access, export, module
+    # -level call) that name-based call resolution can't see.
+    def_counts: Counter[str] = Counter(sym.name for sym in symbols)
     candidates: list[str] = []
     for sym in symbols:
         if sym.type not in _CALLABLE_TYPES:
             continue
         if call_in.get(sym.id, 0) > 0:
             continue
-        if sym.name in _ENTRY_NAMES or sym.name.startswith("test"):
+        if sym.name in _ENTRY_NAMES or sym.name in _IMPLICIT_METHODS:
+            continue
+        if sym.name.startswith("test"):
             continue
         if sym.name.startswith("__") and sym.name.endswith("__"):
             continue  # dunder methods are called implicitly
+        if any(d not in _INERT_DECORATORS for d in sym.decorators):
+            continue  # decorated -> invoked by a framework / accessed as a property
+        if reference_counts.get(sym.name, 0) > def_counts.get(sym.name, 0):
+            continue  # referenced by name somewhere beyond its definition(s)
         candidates.append(f"{sym.path}:{sym.start_line} {sym.name}")
     return sorted(candidates)
 
@@ -213,9 +254,21 @@ def _entry_points(symbols: list[Symbol]) -> list[str]:
 
 def _shared_utilities(symbols: list[Symbol], call_in: Counter[str]) -> list[tuple[str, int]]:
     name_by_id = {s.id: s.name for s in symbols}
-    ranked = [
-        (name_by_id[symbol_id], count)
-        for symbol_id, count in call_in.most_common(_TOP_N)
-        if count > 1 and symbol_id in name_by_id
-    ]
-    return ranked
+    homonyms: Counter[str] = Counter(s.name for s in symbols)
+
+    # Collapse to one row per name (the same short name resolves to many symbol
+    # ids, each carrying a near-identical inflated count), dropping names that
+    # name-based resolution can't attribute confidently.
+    best_by_name: dict[str, int] = {}
+    for symbol_id, count in call_in.items():
+        if count <= 1:
+            continue
+        name = name_by_id.get(symbol_id)
+        if name is None or len(name) < _HOTSPOT_MIN_NAME_LEN:
+            continue
+        if homonyms[name] > _HOTSPOT_MAX_HOMONYMS:
+            continue  # ambiguous callee: count is a name-collision artifact
+        if count > best_by_name.get(name, 0):
+            best_by_name[name] = count
+
+    return sorted(best_by_name.items(), key=lambda item: (-item[1], item[0]))[:_TOP_N]

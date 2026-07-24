@@ -43,6 +43,23 @@ _CALL_QUERIES: dict[str, tuple[str, str]] = {
     ),
 }
 
+# canonical language -> pack grammar name, for whole-file identifier scans used
+# by reference-based liveness (a symbol is "used" if its name appears as an
+# identifier anywhere — a call, a JSX element, a prop, a member access, an
+# export — not only in call position, which name-based call resolution misses).
+_REFERENCE_GRAMMARS: dict[str, str] = {
+    "Python": "python",
+    "JavaScript": "javascript",
+    "TypeScript": "typescript",
+    "Go": "go",
+    "Rust": "rust",
+    "Java": "java",
+    "C": "c",
+    "C++": "cpp",
+    "C#": "csharp",
+    "PHP": "php",
+}
+
 # canonical language -> (pack grammar name, import query)
 _IMPORT_QUERIES: dict[str, tuple[str, str]] = {
     "Python": (
@@ -85,6 +102,25 @@ class RelationshipExtractor:
     def supports_imports(self, language: str) -> bool:
         return language in _IMPORT_QUERIES
 
+    def supports_references(self, language: str) -> bool:
+        return language in _REFERENCE_GRAMMARS
+
+    def extract_reference_names(self, language: str, source: bytes) -> list[str]:
+        """Every identifier occurrence in ``source`` (definitions and uses alike).
+
+        Broader than :meth:`extract_call_names`: it also captures JSX element
+        names, prop identifiers, member accesses, and type references, so a
+        symbol used in any of those ways is not mistaken for dead code.
+        """
+        pack = _REFERENCE_GRAMMARS.get(language)
+        if pack is None:
+            return []
+        try:
+            root = get_parser(pack).parse(source).root_node
+        except Exception:
+            return []
+        return _collect_identifiers(root)
+
     def extract_call_names(self, language: str, source: bytes) -> list[str]:
         spec = _CALL_QUERIES.get(language)
         if spec is None:
@@ -119,6 +155,24 @@ class RelationshipExtractor:
 
 def _node_text(node: Node) -> str:
     return (node.text or b"").decode("utf-8", errors="replace")
+
+
+def _collect_identifiers(root: Node) -> list[str]:
+    """Iteratively gather the text of every identifier-like leaf in the tree.
+
+    Grammar-agnostic: any node type ending in ``identifier`` (``identifier``,
+    ``property_identifier``, ``type_identifier``, ``field_identifier``, …) is an
+    occurrence; identifiers are leaves, so we do not descend into them.
+    """
+    names: list[str] = []
+    stack: list[Node] = [root]
+    while stack:
+        node = stack.pop()
+        if node.type.endswith("identifier"):
+            names.append(_node_text(node))
+        else:
+            stack.extend(node.children)
+    return names
 
 
 def _strip_quotes(value: str) -> str:

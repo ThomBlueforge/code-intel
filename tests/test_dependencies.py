@@ -59,14 +59,84 @@ def test_call_graph_detects_dead_and_shared(tmp_path: Path) -> None:
     assert any("uses_helper" in c for c in report.dead_code_candidates)
 
 
+def test_shared_utilities_suppresses_ambiguous_homonyms(tmp_path: Path) -> None:
+    # Many classes each define a `get` method; name-based call resolution links
+    # every `x.get()` to all of them, inflating each to an identical count.
+    classes = "".join(
+        f"class C{i}:\n"
+        f"    def get(self):\n        return {i}\n\n"
+        for i in range(6)
+    )
+    caller = "".join(
+        f"def use{j}(c):\n    return c.get()\n\n" for j in range(8)
+    )
+    report = _analyze(tmp_path, {"m.py": classes + caller})
+    shared = {name for name, _ in report.shared_utilities}
+    # `get` is shared by 6 symbols -> ambiguous -> not reported as a hotspot,
+    # and it must not appear as a wall of duplicate rows either.
+    assert "get" not in shared
+    names = [name for name, _ in report.shared_utilities]
+    assert len(names) == len(set(names))  # one row per name, no duplicates
+
+
 def test_duplicate_implementations_detected(tmp_path: Path) -> None:
-    body = "def {name}():\n    x = 1\n    y = 2\n    return x + y\n"
+    body = "def {name}():\n    x = 1\n    y = 2\n    z = 3\n    return x + y + z\n"
     report = _analyze(
         tmp_path,
         {"a.py": body.format(name="alpha"), "b.py": body.format(name="alpha")},
     )
-    # Identical multi-line bodies with the same name -> duplicate group.
+    # Identical non-trivial bodies with the same name -> duplicate group.
     assert any(g.count >= 2 for g in report.duplicate_implementations)
+
+
+def test_decorated_symbols_not_flagged_dead(tmp_path: Path) -> None:
+    # A @property (attribute access) and a @app.command entrypoint have no
+    # name-resolved callers, but decorators mark them as externally invoked.
+    report = _analyze(
+        tmp_path,
+        {
+            "m.py": (
+                "import typer\n"
+                "app = typer.Typer()\n\n"
+                "class C:\n"
+                "    @property\n"
+                "    def size(self):\n        return 1\n\n"
+                "@app.command()\n"
+                "def serve():\n    return 0\n\n"
+                "def orphan():\n    return 9\n"
+            )
+        },
+    )
+    dead = " ".join(report.dead_code_candidates)
+    assert "size" not in dead  # @property
+    assert "serve" not in dead  # @app.command
+    assert "orphan" in dead  # undecorated, uncalled -> still dead
+
+
+def test_reference_liveness_covers_jsx_props_and_members(tmp_path: Path) -> None:
+    # `Button` is used only as JSX, `handler` only passed as a prop, `getRepos`
+    # only as a member call — none are called by name, but all are referenced.
+    lib = (
+        "export function Button(props: object) {\n  return props;\n}\n"
+        "export class Api {\n  getRepos() {\n    return [];\n  }\n}\n"
+    )
+    app = (
+        "import { Button, Api } from './lib';\n"
+        "function handler() {\n  return 1;\n}\n"
+        "const api = new Api();\n"
+        "export function App() {\n"
+        "  api.getRepos();\n"
+        "  return <Button onClick={handler} />;\n"
+        "}\n"
+        "function trulyDead() {\n  return 0;\n}\n"
+    )
+    report = _analyze(tmp_path, {"lib.tsx": lib, "app.tsx": app})
+    dead = " ".join(report.dead_code_candidates)
+    assert "Button" not in dead  # used as JSX
+    assert "handler" not in dead  # passed as a prop
+    assert "getRepos" not in dead  # member call
+    assert "constructor" not in dead  # implicit via `new`
+    assert "trulyDead" in dead  # defined, referenced nowhere -> dead
 
 
 def test_module_import_graph_and_cycles(tmp_path: Path) -> None:

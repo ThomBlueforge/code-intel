@@ -28,7 +28,7 @@ def _analyze(tmp_path: Path, files: dict[str, str]):
 
 
 def test_detects_duplicate_and_dead_code(tmp_path: Path) -> None:
-    body = "def {n}():\n    a = 1\n    b = 2\n    return a + b\n"
+    body = "def {n}():\n    a = 1\n    b = 2\n    c = 3\n    return a + b + c\n"
     _s, _r, report = _analyze(
         tmp_path,
         {
@@ -42,7 +42,9 @@ def test_detects_duplicate_and_dead_code(tmp_path: Path) -> None:
 
 
 def test_detects_repository_pattern_and_god_object(tmp_path: Path) -> None:
-    methods = "".join(f"    def m{i}(self):\n        return {i}\n" for i in range(16))
+    # Data-access method names so the class matches the Repository pattern
+    # structurally, not just by name.
+    methods = "".join(f"    def get{i}(self):\n        return {i}\n" for i in range(16))
     _s, _r, report = _analyze(
         tmp_path,
         {
@@ -52,6 +54,16 @@ def test_detects_repository_pattern_and_god_object(tmp_path: Path) -> None:
     categories = {f.category for f in report.findings}
     assert "design_pattern" in categories  # UserRepository -> Repository
     assert "god_object" in categories  # 16 methods
+
+
+def test_named_like_pattern_without_methods_is_not_flagged(tmp_path: Path) -> None:
+    # A data model merely named `Repository` (no data-access methods) is not the
+    # Repository pattern and must not be reported.
+    _s, _r, report = _analyze(
+        tmp_path,
+        {"models.py": "class Repository:\n    id: str\n    path: str\n    name: str\n"},
+    )
+    assert not any(f.category == "design_pattern" for f in report.findings)
 
 
 def test_findings_carry_origin_and_confidence(tmp_path: Path) -> None:
@@ -93,6 +105,11 @@ def test_pattern_detector_directly() -> None:
         )
 
     cls = sym("c", "OrderFactory", "class", None, 10)
-    children = {"c": [sym(f"m{i}", f"m{i}", "method", "c", 2) for i in range(3)]}
+    children = {
+        "c": [
+            sym("m0", "create", "method", "c", 2),  # factory method -> structural match
+            sym("m1", "helper", "method", "c", 2),
+        ]
+    }
     found = PatternDetector().detect([cls], children)
     assert any(p.category == "design_pattern" and "Factory" in p.title for p in found)

@@ -24,6 +24,10 @@ from code_intel.config import ScanSettings
 from code_intel.ingestion.hashing import probe_file
 from code_intel.ingestion.languages import detect_language
 
+# Minified/generated bundles carry no meaningful symbols; skip them by name so
+# vendored `*.min.js` outside an ignored directory doesn't reach the parser.
+_GENERATED_SUFFIXES = (".min.js", ".min.mjs", ".min.cjs", ".min.css", ".bundle.js")
+
 
 @dataclass(frozen=True)
 class ScannedFile:
@@ -75,6 +79,10 @@ class Scanner:
     ) -> ScannedFile | None:
         rel = abs_path.relative_to(root).as_posix()
         if spec is not None and spec.match_file(rel):
+            self._bump("skipped_ignored")
+            return None
+
+        if abs_path.name.endswith(_GENERATED_SUFFIXES):
             self._bump("skipped_ignored")
             return None
 

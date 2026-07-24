@@ -20,8 +20,11 @@ DEFAULT_DB_FILENAME = "index.db"
 # and (later) parsing. Larger files are recorded in the manifest but skipped.
 DEFAULT_MAX_FILE_BYTES = 5_000_000
 
-# Directory names never worth scanning. Kept deliberately small; .gitignore
-# handles project-specific exclusions.
+# Directory names never worth scanning: VCS metadata, dependency vendors, tool
+# caches, and build/export output. Generated bundles (especially minified single
+# -line JS) produce meaningless symbols and pollute the intelligence layer, so we
+# exclude the common output dirs by default — the scanner only honours the repo
+# -root .gitignore, so a nested web/.gitignore ignoring `out/` would not catch them.
 DEFAULT_IGNORED_DIRS: frozenset[str] = frozenset(
     {
         ".git",
@@ -38,6 +41,12 @@ DEFAULT_IGNORED_DIRS: frozenset[str] = frozenset(
         ".ruff_cache",
         "dist",
         "build",
+        "out",  # Next.js static export, common bundler output
+        ".output",  # Nuxt 3 / Nitro
+        ".svelte-kit",
+        ".turbo",
+        ".parcel-cache",
+        ".vercel",
         "target",
         ".next",
         ".nuxt",
