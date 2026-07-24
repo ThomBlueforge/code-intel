@@ -10,7 +10,7 @@ lock-in, nothing hardcoded** — every parameter is configuration.
 
 | Setting | Env var | Default |
 |---------|---------|---------|
-| base_url | `CODE_INTEL_LLM_BASE_URL` | `http://localhost:5000/v1` |
+| base_url | `CODE_INTEL_LLM_BASE_URL` | `http://localhost:5001/v1` |
 | api_key | `CODE_INTEL_LLM_API_KEY` | `not-needed-for-local` |
 | model | `CODE_INTEL_LLM_MODEL` | `local-model` |
 | temperature | `CODE_INTEL_LLM_TEMPERATURE` | `0.0` |

@@ -244,6 +244,7 @@ def _to_symbols(
             hash=ps.hash,
             created_at=now,
             updated_at=now,
+            decorators=ps.decorators,
         )
         for ps in parsed
     ]

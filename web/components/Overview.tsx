@@ -4,12 +4,14 @@ import { useEffect, useState } from "react";
 
 import {
   ApiError,
-  type Intel,
-  type Stats,
   getIntel,
   getStats,
+  getUnderstanding,
+  type Intel,
+  type RepoUnderstanding,
+  type Stats,
 } from "@/lib/api";
-import { OriginBadge, Panel, Spinner, Stat } from "./ui";
+import { Badge, OriginBadge, Panel, Spinner, Stat } from "./ui";
 
 interface Props {
   repoPath: string;
@@ -34,6 +36,7 @@ function ListOrEmpty({ items, limit = 12 }: { items: string[]; limit?: number })
 export function Overview({ repoPath }: Props) {
   const [stats, setStats] = useState<Stats | null>(null);
   const [intel, setIntel] = useState<Intel | null>(null);
+  const [overview, setOverview] = useState<RepoUnderstanding | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -43,11 +46,17 @@ export function Overview({ repoPath }: Props) {
     setError(null);
     setStats(null);
     setIntel(null);
-    Promise.all([getStats(repoPath), getIntel(repoPath)])
-      .then(([s, i]) => {
+    setOverview(null);
+    Promise.all([
+      getStats(repoPath),
+      getIntel(repoPath),
+      getUnderstanding(repoPath).catch(() => null), // optional layer
+    ])
+      .then(([s, i, u]) => {
         if (!cancelled) {
           setStats(s);
           setIntel(i);
+          setOverview(u?.repo ?? null);
         }
       })
       .catch((err) => {
@@ -81,6 +90,37 @@ export function Overview({ repoPath }: Props) {
 
   return (
     <div className="stack-lg">
+      {overview ? (
+        <Panel
+          eyebrow="Codebase comprehension"
+          title="What this project is"
+          actions={
+            <Badge tone={overview.source === "llm" ? "ok" : "neutral"}>
+              {overview.source === "llm" ? "AI synthesis" : "static"}
+            </Badge>
+          }
+        >
+          <p className="overview-summary">{overview.summary}</p>
+          {overview.architecture.length ? (
+            <ul className="overview-arch">
+              {overview.architecture.map((bullet, i) => (
+                <li key={`${bullet}-${i}`}>{bullet}</li>
+              ))}
+            </ul>
+          ) : null}
+          {overview.entry_points.length ? (
+            <p className="overview-entry">
+              <span className="fileu-collab-label">Entry points:</span>{" "}
+              {overview.entry_points.slice(0, 6).map((e) => (
+                <span key={e} className="mono fileu-collab-item">
+                  {e}
+                </span>
+              ))}
+            </p>
+          ) : null}
+        </Panel>
+      ) : null}
+
       <div className="stat-grid">
         <Stat tone="accent" label="Files" value={stats.files} />
         <Stat label="Symbols" value={stats.symbols} />

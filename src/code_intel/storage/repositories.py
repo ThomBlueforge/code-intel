@@ -15,9 +15,11 @@ from code_intel.models import (
     EmbeddingRecord,
     EnrichedSymbol,
     FileRecord,
+    FileUnderstanding,
     Finding,
     QualityMetrics,
     Repository,
+    RepoUnderstanding,
     Summary,
     Symbol,
     utc_now_iso,
@@ -127,7 +129,8 @@ class SymbolStore:
 
     _COLUMNS = (
         "id, repository_id, file_id, name, type, language, path, start_line, "
-        "end_line, signature, visibility, parent_id, code, hash, created_at, updated_at"
+        "end_line, signature, visibility, parent_id, code, hash, created_at, updated_at, "
+        "decorators"
     )
 
     def __init__(self, conn: sqlite3.Connection) -> None:
@@ -136,7 +139,7 @@ class SymbolStore:
     def insert_many(self, symbols: list[Symbol]) -> None:
         self._conn.executemany(
             f"INSERT INTO symbols ({self._COLUMNS}) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 (
                     s.id,
@@ -155,6 +158,7 @@ class SymbolStore:
                     s.hash,
                     s.created_at,
                     s.updated_at,
+                    ",".join(s.decorators),
                 )
                 for s in symbols
             ],
@@ -250,6 +254,15 @@ class EnrichedSymbolStore:
     def enriched_ids(self) -> set[str]:
         rows = self._conn.execute("SELECT symbol_id FROM enriched_symbols").fetchall()
         return {row["symbol_id"] for row in rows}
+
+    def map_for_repository(self, repository_id: str) -> dict[str, EnrichedSymbol]:
+        """All enrichment rows for a repo, keyed by ``symbol_id`` (joined via symbols)."""
+        rows = self._conn.execute(
+            f"SELECT e.{', e.'.join(self._COLUMNS.split(', '))} FROM enriched_symbols e "
+            "JOIN symbols s ON s.id = e.symbol_id WHERE s.repository_id = ?",
+            (repository_id,),
+        ).fetchall()
+        return {row["symbol_id"]: _row_to_enriched(row) for row in rows}
 
 
 class EmbeddingStore:
@@ -376,6 +389,119 @@ class FindingStore:
         return [_row_to_finding(row) for row in rows]
 
 
+class FileUnderstandingStore:
+    """Holistic per-file understanding (Phase 23). List fields are JSON text."""
+
+    _COLUMNS = (
+        "repository_id, path, summary, responsibilities, key_exports, collaborators, "
+        "role, source, confidence, content_hash, model, created_at, updated_at"
+    )
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def upsert(self, fu: FileUnderstanding) -> None:
+        self._conn.execute(
+            f"INSERT INTO file_understanding ({self._COLUMNS}) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(repository_id, path) DO UPDATE SET "
+            "summary=excluded.summary, responsibilities=excluded.responsibilities, "
+            "key_exports=excluded.key_exports, collaborators=excluded.collaborators, "
+            "role=excluded.role, source=excluded.source, confidence=excluded.confidence, "
+            "content_hash=excluded.content_hash, model=excluded.model, "
+            "updated_at=excluded.updated_at",
+            (
+                fu.repository_id,
+                fu.path,
+                fu.summary,
+                json.dumps(fu.responsibilities),
+                json.dumps(fu.key_exports),
+                json.dumps(fu.collaborators),
+                fu.role,
+                fu.source,
+                fu.confidence,
+                fu.content_hash,
+                fu.model,
+                fu.created_at,
+                fu.updated_at,
+            ),
+        )
+
+    def get(self, repository_id: str, path: str) -> FileUnderstanding | None:
+        row = self._conn.execute(
+            f"SELECT {self._COLUMNS} FROM file_understanding "
+            "WHERE repository_id = ? AND path = ?",
+            (repository_id, path),
+        ).fetchone()
+        return _row_to_file_understanding(row) if row else None
+
+    def map_for_repository(self, repository_id: str) -> dict[str, FileUnderstanding]:
+        rows = self._conn.execute(
+            f"SELECT {self._COLUMNS} FROM file_understanding WHERE repository_id = ?",
+            (repository_id,),
+        ).fetchall()
+        return {row["path"]: _row_to_file_understanding(row) for row in rows}
+
+    def hashes(self, repository_id: str) -> dict[str, str]:
+        """Path -> content_hash, so a rebuild can skip unchanged files."""
+        rows = self._conn.execute(
+            "SELECT path, content_hash FROM file_understanding WHERE repository_id = ?",
+            (repository_id,),
+        ).fetchall()
+        return {row["path"]: row["content_hash"] for row in rows}
+
+    def count(self, repository_id: str) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM file_understanding WHERE repository_id = ?",
+            (repository_id,),
+        ).fetchone()
+        return int(row["n"])
+
+
+class RepoUnderstandingStore:
+    """The single top-level repository overview (Phase 23)."""
+
+    _COLUMNS = (
+        "repository_id, summary, architecture, entry_points, key_modules, source, "
+        "confidence, content_hash, model, created_at, updated_at"
+    )
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def upsert(self, ru: RepoUnderstanding) -> None:
+        self._conn.execute(
+            f"INSERT INTO repo_understanding ({self._COLUMNS}) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(repository_id) DO UPDATE SET "
+            "summary=excluded.summary, architecture=excluded.architecture, "
+            "entry_points=excluded.entry_points, key_modules=excluded.key_modules, "
+            "source=excluded.source, confidence=excluded.confidence, "
+            "content_hash=excluded.content_hash, model=excluded.model, "
+            "updated_at=excluded.updated_at",
+            (
+                ru.repository_id,
+                ru.summary,
+                json.dumps(ru.architecture),
+                json.dumps(ru.entry_points),
+                json.dumps(ru.key_modules),
+                ru.source,
+                ru.confidence,
+                ru.content_hash,
+                ru.model,
+                ru.created_at,
+                ru.updated_at,
+            ),
+        )
+
+    def get(self, repository_id: str) -> RepoUnderstanding | None:
+        row = self._conn.execute(
+            f"SELECT {self._COLUMNS} FROM repo_understanding WHERE repository_id = ?",
+            (repository_id,),
+        ).fetchone()
+        return _row_to_repo_understanding(row) if row else None
+
+
 def _row_to_summary(row: sqlite3.Row) -> Summary:
     return Summary(
         scope=row["scope"],
@@ -451,6 +577,41 @@ def _row_to_symbol(row: sqlite3.Row) -> Symbol:
         parent_id=row["parent_id"],
         code=row["code"],
         hash=row["hash"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        decorators=tuple(d for d in (row["decorators"] or "").split(",") if d),
+    )
+
+
+def _row_to_file_understanding(row: sqlite3.Row) -> FileUnderstanding:
+    return FileUnderstanding(
+        repository_id=row["repository_id"],
+        path=row["path"],
+        summary=row["summary"],
+        responsibilities=json.loads(row["responsibilities"]),
+        key_exports=json.loads(row["key_exports"]),
+        collaborators=json.loads(row["collaborators"]),
+        role=row["role"],
+        source=row["source"],
+        confidence=row["confidence"],
+        content_hash=row["content_hash"],
+        model=row["model"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _row_to_repo_understanding(row: sqlite3.Row) -> RepoUnderstanding:
+    return RepoUnderstanding(
+        repository_id=row["repository_id"],
+        summary=row["summary"],
+        architecture=json.loads(row["architecture"]),
+        entry_points=json.loads(row["entry_points"]),
+        key_modules=json.loads(row["key_modules"]),
+        source=row["source"],
+        confidence=row["confidence"],
+        content_hash=row["content_hash"],
+        model=row["model"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

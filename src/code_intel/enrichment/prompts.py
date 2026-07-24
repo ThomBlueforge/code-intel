@@ -7,8 +7,26 @@ parse time by the enricher.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 from code_intel.llm.client import ChatMessage
 from code_intel.models import Symbol
+
+
+@dataclass(frozen=True)
+class SymbolContext:
+    """Deterministic structural context around a symbol (from static analysis).
+
+    Handing the model the callers, callees, parent, and location lets it explain
+    what a unit *fundamentally does and how it fits* — not just what its body
+    literally contains. All fields come from facts we already computed.
+    """
+
+    path: str
+    parent: str | None = None
+    decorators: tuple[str, ...] = ()
+    calls: list[str] = field(default_factory=list)  # callee names
+    called_by: list[str] = field(default_factory=list)  # caller names
 
 ARCHITECTURE_LAYERS: frozenset[str] = frozenset(
     {
@@ -51,9 +69,10 @@ _SYSTEM_PROMPT = (
 )
 
 _USER_TEMPLATE = """Classify and summarise this {language} {kind} named `{name}`.
-
+{context_block}
 Return JSON with exactly these keys:
-- "summary": one or two sentences, plain description of what it does.
+- "summary": one or two sentences describing what it fundamentally does and how
+  it fits into the codebase (use the structural context above if present).
 - "business_domain": array from this closed set (use ["Unknown"] if unclear): {domains}
 - "architecture_layer": one value from this closed set (use "Unknown" if unclear): {layers}
 - "responsibilities": array from this closed set: {responsibilities}
@@ -73,13 +92,18 @@ Source:
 _MAX_CODE_CHARS = 4000
 
 
-def build_messages(symbol: Symbol) -> list[ChatMessage]:
-    """Build the chat messages that ask the model to enrich ``symbol``."""
+def build_messages(symbol: Symbol, context: SymbolContext | None = None) -> list[ChatMessage]:
+    """Build the chat messages that ask the model to enrich ``symbol``.
+
+    When ``context`` is given, its structural facts (location, parent, callers,
+    callees) are shown to the model so the summary can explain how the unit fits.
+    """
     code = symbol.code if len(symbol.code) <= _MAX_CODE_CHARS else symbol.code[:_MAX_CODE_CHARS]
     user = _USER_TEMPLATE.format(
         language=symbol.language,
         kind=symbol.type,
         name=symbol.name,
+        context_block=_context_block(context),
         domains=", ".join(sorted(BUSINESS_DOMAINS)),
         layers=", ".join(sorted(ARCHITECTURE_LAYERS)),
         responsibilities=", ".join(sorted(RESPONSIBILITIES)),
@@ -89,3 +113,25 @@ def build_messages(symbol: Symbol) -> list[ChatMessage]:
         ChatMessage(role="system", content=_SYSTEM_PROMPT),
         ChatMessage(role="user", content=user),
     ]
+
+
+_MAX_CONTEXT_NAMES = 12
+
+
+def _context_block(context: SymbolContext | None) -> str:
+    if context is None:
+        return ""
+    lines = [f"- Defined in: {context.path}"]
+    if context.parent:
+        lines.append(f"- Member of: {context.parent}")
+    if context.decorators:
+        lines.append(f"- Decorators: {', '.join('@' + d for d in context.decorators)}")
+    if context.calls:
+        lines.append(f"- Calls: {', '.join(context.calls[:_MAX_CONTEXT_NAMES])}")
+    if context.called_by:
+        lines.append(f"- Called by: {', '.join(context.called_by[:_MAX_CONTEXT_NAMES])}")
+    body = "\n".join(lines)
+    return (
+        "\nStructural context (from static analysis — use it to explain how this "
+        f"unit fits, do not restate it):\n{body}\n"
+    )

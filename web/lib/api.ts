@@ -269,6 +269,127 @@ export const getFileSource = (
   return request(`/api/file?${qp(params)}`);
 };
 
+// --- repo-wide symbol browser -------------------------------------------
+
+export interface QualityMetrics {
+  complexity: number;
+  maintainability: number;
+  readability: number;
+  coupling: number;
+  cohesion: number;
+  testability: number;
+  risk: number;
+  stability: number;
+  reusability: number;
+  technical_debt: number;
+}
+
+export interface EnrichedInfo {
+  symbol_id: string;
+  summary: string;
+  business_domain: string[];
+  architecture_layer: string;
+  responsibilities: string[];
+  quality_metrics: QualityMetrics;
+  risks: string[];
+  technical_debt: string[];
+  confidence: number;
+  model: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SymbolDetail {
+  id: string;
+  name: string;
+  type: string;
+  language: string;
+  path: string;
+  start_line: number;
+  end_line: number;
+  loc: number;
+  signature: string;
+  visibility: string;
+  parent: string | null;
+  decorators: string[];
+  code: string;
+  hash: string;
+  created_at: string;
+  updated_at: string;
+  enriched: EnrichedInfo | null;
+}
+
+export type SymbolSort = "loc" | "name" | "type" | "path" | "updated";
+
+export interface SymbolPage {
+  total: number;
+  returned: number;
+  enriched_available: boolean;
+  symbols: SymbolDetail[];
+}
+
+export const getAllSymbols = (
+  path: string,
+  opts: {
+    q?: string;
+    sort?: SymbolSort;
+    order?: "asc" | "desc";
+    limit?: number;
+  } = {},
+): Promise<SymbolPage> => {
+  const params: Record<string, string> = { path };
+  if (opts.q) params.q = opts.q;
+  if (opts.sort) params.sort = opts.sort;
+  if (opts.order) params.order = opts.order;
+  if (opts.limit != null) params.limit = String(opts.limit);
+  return request(`/api/symbols/all?${qp(params)}`);
+};
+
+// --- codebase comprehension (Phase 23) ----------------------------------
+
+export interface FileUnderstanding {
+  repository_id: string;
+  path: string;
+  summary: string;
+  responsibilities: string[];
+  key_exports: string[];
+  collaborators: string[];
+  role: string;
+  source: string; // "aggregate" | "llm"
+  confidence: number;
+  model: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RepoUnderstanding {
+  repository_id: string;
+  summary: string;
+  architecture: string[];
+  entry_points: string[];
+  key_modules: string[];
+  source: string;
+  confidence: number;
+  model: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Understanding {
+  available: boolean;
+  repo: RepoUnderstanding | null;
+  file: FileUnderstanding | null;
+}
+
+export const getUnderstanding = (
+  path: string,
+  file?: string,
+): Promise<Understanding> => {
+  const params: Record<string, string> = { path };
+  if (file) params.file = file;
+  return request(`/api/understanding?${qp(params)}`);
+};
+
 // --- graph (U4) -----------------------------------------------------------
 
 export interface GraphNode {

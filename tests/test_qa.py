@@ -10,6 +10,7 @@ from code_intel.llm.client import ChatMessage
 from code_intel.retrieval.hybrid import HybridRetriever
 from code_intel.storage.database import Database
 from code_intel.storage.repositories import RepositoryStore
+from code_intel.understanding.comprehension import ComprehensionBuilder
 from code_intel.understanding.qa import QuestionAnswerer
 
 
@@ -77,3 +78,48 @@ def test_ask_no_results(tmp_path: Path) -> None:
         retriever = HybridRetriever(conn, repo_id, repo)
         answer = QuestionAnswerer(conn, repo_id, retriever).ask("zzznonexistentquery")
     assert answer.citations == []
+
+
+def test_ask_structural_biggest_function_is_deterministic(tmp_path: Path) -> None:
+    settings, repo_id, repo = _indexed(tmp_path)
+    client = RecordingChatClient()
+    with Database(settings.db_path) as db:
+        conn = db.connection
+        retriever = HybridRetriever(conn, repo_id, repo)
+        answer = QuestionAnswerer(conn, repo_id, retriever, chat_client=client).ask(
+            "What is the biggest function?"
+        )
+    # Structural questions are answered from the index — the LLM is never called.
+    assert answer.used_llm is False
+    assert client.last_prompt == ""
+    assert "Largest functions" in answer.answer
+    assert answer.citations
+
+
+def test_ask_context_includes_comprehension(tmp_path: Path) -> None:
+    settings, repo_id, repo = _indexed(tmp_path)
+    client = RecordingChatClient()
+    with Database(settings.db_path) as db:
+        conn = db.connection
+        # Build (deterministic) file/repo understanding, then ask a normal question.
+        ComprehensionBuilder(conn, repo_id).build()
+        retriever = HybridRetriever(conn, repo_id, repo)
+        QuestionAnswerer(conn, repo_id, retriever, chat_client=client).ask(
+            "How does authentication work?"
+        )
+    # The prompt is now layered: repo overview + per-file responsibilities + code.
+    assert "Repository overview:" in client.last_prompt
+    assert "Responsibilities:" in client.last_prompt
+    assert "code:" in client.last_prompt
+
+
+def test_ask_structural_where_is_locates_symbol(tmp_path: Path) -> None:
+    settings, repo_id, repo = _indexed(tmp_path)
+    with Database(settings.db_path) as db:
+        conn = db.connection
+        retriever = HybridRetriever(conn, repo_id, repo)
+        answer = QuestionAnswerer(conn, repo_id, retriever).ask(
+            "where is authenticate defined?"
+        )
+    assert "authenticate" in answer.answer
+    assert any("auth.py" in c for c in answer.citations)

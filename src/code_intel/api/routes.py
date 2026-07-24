@@ -12,7 +12,7 @@ synchronous reads.
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -41,18 +41,22 @@ from code_intel.ingestion.indexer import Indexer
 from code_intel.intelligence.report import IntelligenceEngine
 from code_intel.keyword_search.searcher import KeywordSearcher
 from code_intel.llm.client import OpenAICompatibleClient
-from code_intel.models import Finding
+from code_intel.models import Finding, Symbol
 from code_intel.registry import RepositoryRegistry
 from code_intel.retrieval.hybrid import HybridRetriever
 from code_intel.storage.database import Database
 from code_intel.storage.repositories import (
     EmbeddingStore,
+    EnrichedSymbolStore,
     FileStore,
+    FileUnderstandingStore,
     FindingStore,
     RepositoryStore,
+    RepoUnderstandingStore,
     SymbolStore,
 )
 from code_intel.symbols.index import SymbolIndex
+from code_intel.understanding.comprehension import ComprehensionBuilder
 from code_intel.understanding.qa import QuestionAnswerer
 from code_intel.understanding.summaries import SummaryBuilder
 from code_intel.vectorstore.qdrant_store import QdrantVectorStore
@@ -137,6 +141,11 @@ def _submit_index(request: Request, path: str, kind: str) -> dict[str, Any]:
         RepositoryRegistry().record(
             repo_path=resolved, name=resolved.name, db_path=settings.db_path
         )
+        # Deterministic comprehension so file/repo understanding exists without an
+        # LLM; `enrich` upgrades it to richer AI synthesis later.
+        update(report.symbols_total, None, "Building codebase comprehension")
+        with Database(settings.db_path) as store:
+            ComprehensionBuilder(store.connection, report.repository_id).build()
         return {
             "repository_id": report.repository_id,
             "added": report.added,
@@ -262,6 +271,91 @@ def symbols(path: str, file: str | None = None) -> dict[str, Any]:
         return {"breakdown": {row["type"]: row["n"] for row in breakdown}}
 
 
+_SYMBOL_SORTS = frozenset({"loc", "name", "type", "path", "updated"})
+_MAX_SYMBOL_LIMIT = 2000
+
+
+def _symbol_detail(
+    sym: Symbol, names: dict[str, str], enriched: dict[str, Any]
+) -> dict[str, Any]:
+    """Every stored field for a symbol, its length, and its enrichment if any."""
+    e = enriched.get(sym.id)
+    return {
+        "id": sym.id,
+        "name": sym.name,
+        "type": sym.type,
+        "language": sym.language,
+        "path": sym.path,
+        "start_line": sym.start_line,
+        "end_line": sym.end_line,
+        "loc": sym.end_line - sym.start_line + 1,
+        "signature": sym.signature,
+        "visibility": sym.visibility,
+        "parent": names.get(sym.parent_id) if sym.parent_id else None,
+        "decorators": list(sym.decorators),
+        "code": sym.code,
+        "hash": sym.hash,
+        "created_at": sym.created_at,
+        "updated_at": sym.updated_at,
+        "enriched": asdict(e) if e is not None else None,
+    }
+
+
+@router.get("/symbols/all")
+def all_symbols(
+    path: str,
+    q: str | None = None,
+    sort: str = "loc",
+    order: str = "desc",
+    limit: int = 500,
+) -> dict[str, Any]:
+    """Repo-wide symbols with full fields, length (LOC), and enrichment.
+
+    Searchable via ``q`` (name/type/path/signature/decorators) and sortable —
+    default ``sort=loc order=desc`` surfaces the biggest symbols first.
+    """
+    sort = sort if sort in _SYMBOL_SORTS else "loc"
+    reverse = order != "asc"
+    needle = (q or "").strip().lower()
+    limit = max(1, min(limit, _MAX_SYMBOL_LIMIT))
+
+    with open_repo(path) as (conn, repo):
+        symbols = SymbolStore(conn).list_for_repository(repo.id)
+        names = {s.id: s.name for s in symbols}
+        enriched = cast(dict[str, Any], EnrichedSymbolStore(conn).map_for_repository(repo.id))
+
+    if needle:
+        symbols = [s for s in symbols if _symbol_matches(s, needle)]
+
+    if sort == "name":
+        symbols.sort(key=lambda s: s.name.lower(), reverse=reverse)
+    elif sort == "type":
+        symbols.sort(key=lambda s: s.type, reverse=reverse)
+    elif sort == "path":
+        symbols.sort(key=lambda s: (s.path.lower(), s.start_line), reverse=reverse)
+    elif sort == "updated":
+        symbols.sort(key=lambda s: s.updated_at, reverse=reverse)
+    else:  # loc
+        symbols.sort(key=lambda s: s.end_line - s.start_line + 1, reverse=reverse)
+
+    total = len(symbols)
+    rows = symbols[:limit]
+    return {
+        "total": total,
+        "returned": len(rows),
+        "enriched_available": bool(enriched),
+        "symbols": [_symbol_detail(s, names, enriched) for s in rows],
+    }
+
+
+def _symbol_matches(sym: Symbol, needle: str) -> bool:
+    haystack = (
+        f"{sym.name} {sym.type} {sym.language} {sym.path} "
+        f"{sym.signature} {' '.join(sym.decorators)}"
+    ).lower()
+    return needle in haystack
+
+
 @router.get("/graph")
 def graph(path: str, symbol: str, depth: int = 1) -> dict[str, Any]:
     with open_repo(path) as (conn, repo):
@@ -362,6 +456,22 @@ def explain(path: str, target: str) -> dict[str, Any]:
         "target": explanation.target,
         "summary": explanation.summary,
         "details": explanation.details,
+    }
+
+
+@router.get("/understanding")
+def understanding(path: str, file: str | None = None) -> dict[str, Any]:
+    """Bottom-up comprehension: the repo overview and, if ``file`` is given, that
+    file's holistic understanding (summary + enumerated responsibilities)."""
+    with open_repo(path) as (conn, repo):
+        repo_understanding = RepoUnderstandingStore(conn).get(repo.id)
+        file_store = FileUnderstandingStore(conn)
+        file_understanding = file_store.get(repo.id, file) if file else None
+        file_count = file_store.count(repo.id)
+    return {
+        "available": repo_understanding is not None or file_count > 0,
+        "repo": asdict(repo_understanding) if repo_understanding is not None else None,
+        "file": asdict(file_understanding) if file_understanding is not None else None,
     }
 
 
@@ -486,6 +596,10 @@ def enrich(body: EnrichBody, request: Request) -> dict[str, Any]:
                 report = Enricher(conn, client, llm.model).enrich_repository(
                     repo.id, limit=body.limit, force=body.force
                 )
+                update(report.enriched, None, "Building codebase comprehension")
+                comprehension = ComprehensionBuilder(conn, repo.id).build(
+                    chat_client=client, model=llm.model, force=body.force
+                )
         finally:
             client.close()
         return {
@@ -493,6 +607,8 @@ def enrich(body: EnrichBody, request: Request) -> dict[str, Any]:
             "skipped": report.skipped,
             "failed": report.failed,
             "total_enriched_in_repo": report.total_enriched_in_repo,
+            "comprehension_files": comprehension.files_built,
+            "comprehension_source": comprehension.source,
         }
 
     return _jobs(request).submit("enrich", run).snapshot()

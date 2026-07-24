@@ -38,6 +38,7 @@ class ParsedSymbol:
     parent_id: str | None
     code: str
     hash: str
+    decorators: tuple[str, ...] = ()
 
 
 @dataclass
@@ -53,6 +54,7 @@ class _Raw:
     end_line: int
     code: str
     language: str
+    decorators: tuple[str, ...]
 
 
 class SymbolExtractor:
@@ -115,6 +117,7 @@ class SymbolExtractor:
                 end_line=def_node.end_point[0] + 1,
                 code=code,
                 language=language,
+                decorators=_decorators_of(def_node),
             )
         return list(seen.values())
 
@@ -150,6 +153,7 @@ class SymbolExtractor:
                     parent_id=parent.id if parent is not None else None,
                     code=child.code,
                     hash=_hash_code(child.code),
+                    decorators=child.decorators,
                 )
             )
         return result
@@ -157,6 +161,36 @@ class SymbolExtractor:
 
 def _node_text(node: Node) -> str:
     return (node.text or b"").decode("utf-8", errors="replace")
+
+
+def _decorators_of(def_node: Node) -> tuple[str, ...]:
+    """Normalised decorator names attached to a definition, order-preserving.
+
+    Python wraps decorated defs in a ``decorated_definition`` parent whose
+    children carry the ``decorator`` nodes; TS/JS attach ``decorator`` nodes as
+    the definition's own children. We scan both so ``@property``/``@app.command``
+    style annotations are captured regardless of language.
+    """
+    names: list[str] = []
+    containers: list[Node] = [def_node]
+    parent = def_node.parent
+    if parent is not None and parent.type == "decorated_definition":
+        containers.append(parent)
+    for container in containers:
+        for child in container.children:
+            if child.type == "decorator":
+                name = _decorator_name(child)
+                if name and name not in names:
+                    names.append(name)
+    return tuple(names)
+
+
+def _decorator_name(node: Node) -> str:
+    """`@app.command("x")` -> `app.command`; `@property` -> `property`."""
+    text = _node_text(node).strip().lstrip("@").strip()
+    text = text.split("(", 1)[0]  # drop call arguments
+    first_line = text.splitlines()[0] if text else ""
+    return first_line.strip()
 
 
 def _kind_of(caps: dict[str, list[Node]]) -> str | None:

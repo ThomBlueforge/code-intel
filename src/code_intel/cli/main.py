@@ -41,6 +41,7 @@ from code_intel.storage.repositories import (
     SymbolStore,
 )
 from code_intel.symbols.index import SymbolIndex
+from code_intel.understanding.comprehension import ComprehensionBuilder
 from code_intel.understanding.qa import QuestionAnswerer
 from code_intel.understanding.summaries import SummaryBuilder
 from code_intel.vectorstore.qdrant_store import QdrantVectorStore
@@ -82,6 +83,9 @@ def index(
     RepositoryRegistry().record(
         repo_path=path.resolve(), name=path.resolve().name, db_path=settings.db_path
     )
+    # Deterministic comprehension (works with no LLM); `enrich` upgrades it later.
+    with Database(settings.db_path) as store:
+        ComprehensionBuilder(store.connection, report.repository_id).build()
 
     if as_json:
         console.print_json(json.dumps(_report_dict(report, settings.db_path)))
@@ -319,6 +323,9 @@ def enrich(
             report = Enricher(conn, client, llm.model).enrich_repository(
                 repo.id, limit=limit, force=force
             )
+            comprehension = ComprehensionBuilder(conn, repo.id).build(
+                chat_client=client, model=llm.model, force=force
+            )
     finally:
         client.close()
 
@@ -326,6 +333,10 @@ def enrich(
         f"[green]Enriched[/green] {report.enriched}  "
         f"skipped {report.skipped}  failed {report.failed}  "
         f"total in repo {report.total_enriched_in_repo}"
+    )
+    console.print(
+        f"[green]Comprehension[/green] built {comprehension.files_built} file(s) "
+        f"({comprehension.source}), skipped {comprehension.files_skipped}"
     )
 
 

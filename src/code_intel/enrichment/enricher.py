@@ -13,10 +13,12 @@ import json
 import sqlite3
 from dataclasses import dataclass
 
+from code_intel.dependencies.callgraph import CallGraph, build_call_graph
 from code_intel.enrichment.prompts import (
     ARCHITECTURE_LAYERS,
     BUSINESS_DOMAINS,
     RESPONSIBILITIES,
+    SymbolContext,
     build_messages,
 )
 from code_intel.llm.client import ChatClient, LLMError
@@ -49,10 +51,12 @@ class Enricher:
         self._client = client
         self._model = model
 
-    def enrich_symbol(self, symbol: Symbol) -> EnrichedSymbol:
+    def enrich_symbol(
+        self, symbol: Symbol, context: SymbolContext | None = None
+    ) -> EnrichedSymbol:
         """Enrich one symbol. Never raises for bad model output — degrades."""
         try:
-            raw = self._client.complete(build_messages(symbol))
+            raw = self._client.complete(build_messages(symbol, context))
             data = _parse_json(raw)
         except (LLMError, ValueError):
             data = None
@@ -68,6 +72,8 @@ class Enricher:
         symbols = SymbolStore(self._conn).list_for_repository(repository_id)
         store = EnrichedSymbolStore(self._conn)
         already = set() if force else store.enriched_ids()
+        call_graph = build_call_graph(symbols)
+        by_id = {s.id: s for s in symbols}
 
         enriched = skipped = failed = 0
         for symbol in symbols:
@@ -79,7 +85,7 @@ class Enricher:
                 continue
             if limit is not None and enriched >= limit:
                 break
-            result = self.enrich_symbol(symbol)
+            result = self.enrich_symbol(symbol, _context_for(symbol, call_graph, by_id))
             store.upsert(result)
             if result.confidence <= 0.0 and result.summary == "Unknown":
                 failed += 1
@@ -113,6 +119,24 @@ class Enricher:
             created_at=now,
             updated_at=now,
         )
+
+
+def _context_for(
+    symbol: Symbol, call_graph: CallGraph, by_id: dict[str, Symbol]
+) -> SymbolContext:
+    """Assemble deterministic structural context for one symbol."""
+    parent = by_id[symbol.parent_id].name if symbol.parent_id in by_id else None
+    return SymbolContext(
+        path=symbol.path,
+        parent=parent,
+        decorators=symbol.decorators,
+        calls=_names(call_graph.out_edges.get(symbol.id, set()), by_id),
+        called_by=_names(call_graph.in_edges.get(symbol.id, set()), by_id),
+    )
+
+
+def _names(ids: set[str], by_id: dict[str, Symbol]) -> list[str]:
+    return sorted({by_id[i].name for i in ids if i in by_id})
 
 
 def _unknown(symbol: Symbol, model: str, now: str) -> EnrichedSymbol:

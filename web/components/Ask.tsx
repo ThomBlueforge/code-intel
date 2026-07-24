@@ -14,6 +14,15 @@ interface Props {
 
 const CITE = /^(.+?):(\d+)/;
 
+// Structural questions are answered deterministically from the index — no LLM
+// needed — so they make good one-click starting points.
+const EXAMPLES = [
+  "What is the biggest file?",
+  "What is the longest function?",
+  "What is the largest class?",
+  "Where is the retrieval logic?",
+];
+
 export function Ask({ repoPath, onOpenSource }: Props) {
   const [question, setQuestion] = useState("");
   const [useLlm, setUseLlm] = useState(false);
@@ -21,9 +30,10 @@ export function Ask({ repoPath, onOpenSource }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const run = async () => {
-    const q = question.trim();
+  const run = async (override?: string) => {
+    const q = (override ?? question).trim();
     if (!q) return;
+    if (override) setQuestion(override);
     setLoading(true);
     setError(null);
     setAnswer(null);
@@ -70,6 +80,20 @@ export function Ask({ repoPath, onOpenSource }: Props) {
               ? "Answered by the configured local LLM, grounded strictly in retrieved context."
               : "Without the LLM, returns the cited context the answer would be grounded in."}
           </p>
+          <div className="ask-examples">
+            <span className="ask-examples-label">Try:</span>
+            {EXAMPLES.map((ex) => (
+              <button
+                key={ex}
+                type="button"
+                className="ask-chip"
+                onClick={() => void run(ex)}
+                disabled={loading}
+              >
+                {ex}
+              </button>
+            ))}
+          </div>
         </form>
         {error ? <div className="notice notice-danger">{error}</div> : null}
       </Panel>

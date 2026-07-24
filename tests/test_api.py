@@ -98,6 +98,42 @@ def test_symbols_breakdown_and_per_file(client_and_repo) -> None:
     assert {s["name"] for s in per_file} == {"authenticate", "validate"}
 
 
+def test_all_symbols_full_fields_sorted_and_searchable(client_and_repo) -> None:
+    client, repo = client_and_repo
+    _index(client, repo)
+    page = client.get(
+        "/api/symbols/all", params={"path": repo, "sort": "loc", "order": "desc"}
+    ).json()
+    assert page["total"] >= 2
+    first = page["symbols"][0]
+    # Every stored field is present, plus length and the enrichment slot.
+    for key in ("id", "name", "type", "language", "path", "loc", "code", "hash",
+                "signature", "visibility", "decorators", "created_at", "enriched"):
+        assert key in first
+    assert first["loc"] == first["end_line"] - first["start_line"] + 1
+    locs = [s["loc"] for s in page["symbols"]]
+    assert locs == sorted(locs, reverse=True)  # biggest first
+    # Search narrows the result set.
+    filtered = client.get(
+        "/api/symbols/all", params={"path": repo, "q": "authenticate"}
+    ).json()
+    assert filtered["total"] == 1
+    assert filtered["symbols"][0]["name"] == "authenticate"
+
+
+def test_understanding_available_after_index(client_and_repo) -> None:
+    client, repo = client_and_repo
+    _index(client, repo)
+    # Indexing builds deterministic comprehension (no LLM needed).
+    u = client.get(
+        "/api/understanding", params={"path": repo, "file": "auth.py"}
+    ).json()
+    assert u["available"] is True
+    assert u["repo"] is not None
+    assert u["file"] is not None and u["file"]["path"] == "auth.py"
+    assert u["file"]["responsibilities"]  # enumerated (1)(2)(3)
+
+
 def test_files(client_and_repo) -> None:
     client, repo = client_and_repo
     _index(client, repo)

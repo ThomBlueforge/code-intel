@@ -96,6 +96,9 @@ class Symbol:
     hash: str
     created_at: str
     updated_at: str
+    # Normalised decorator/annotation names (e.g. "property", "router.get").
+    # Empty for undecorated symbols. Persisted comma-joined; see SymbolStore.
+    decorators: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -189,3 +192,51 @@ class Finding:
     confidence: float
     target: str  # path / symbol name / concept
     created_at: str
+
+
+@dataclass(frozen=True)
+class FileUnderstanding:
+    """Holistic understanding of one file (Phase 23 — codebase comprehension).
+
+    Built bottom-up from the file's symbol understandings, so it describes what
+    the file *does* and its enumerated ``responsibilities`` rather than merely
+    counting symbols. ``source`` is "llm" or "aggregate" (deterministic
+    fallback); ``content_hash`` fingerprints the file's symbol set for
+    incremental rebuilds. Kept separate from deterministic facts and rebuildable.
+    """
+
+    repository_id: str
+    path: str
+    summary: str
+    responsibilities: list[str]  # enumerated: what the file does, item by item
+    key_exports: list[str]
+    collaborators: list[str]  # modules it imports / is imported by
+    role: str  # short architectural role, e.g. "storage", "http api"
+    source: str  # "aggregate" | "llm"
+    confidence: float
+    content_hash: str
+    model: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class RepoUnderstanding:
+    """Top-level architectural overview of a repository (Phase 23).
+
+    Synthesised from the file understandings — the orientation an agent would
+    build first: what the project is, how its modules fit together, and where to
+    start reading.
+    """
+
+    repository_id: str
+    summary: str
+    architecture: list[str]  # bullet points on how the modules fit together
+    entry_points: list[str]
+    key_modules: list[str]
+    source: str  # "aggregate" | "llm"
+    confidence: float
+    content_hash: str
+    model: str
+    created_at: str
+    updated_at: str

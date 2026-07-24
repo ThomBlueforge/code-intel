@@ -12,7 +12,7 @@ import sqlite3
 from pathlib import Path
 from types import TracebackType
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 7
 
 _SCHEMA_STATEMENTS: tuple[str, ...] = (
     """
@@ -63,7 +63,8 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         code          TEXT NOT NULL,
         hash          TEXT NOT NULL,
         created_at    TEXT NOT NULL,
-        updated_at    TEXT NOT NULL
+        updated_at    TEXT NOT NULL,
+        decorators    TEXT NOT NULL DEFAULT ''
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_symbols_repo ON symbols (repository_id)",
@@ -130,7 +131,60 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_findings_repo ON findings (repository_id)",
     "CREATE INDEX IF NOT EXISTS idx_summaries_path ON summaries (path)",
+    # Codebase comprehension (Phase 23): holistic, bottom-up understanding of
+    # each file and the repository as a whole. List fields are JSON-encoded;
+    # content_hash fingerprints the inputs for incremental rebuilds. Separate
+    # from deterministic facts — deletable and rebuildable.
+    """
+    CREATE TABLE IF NOT EXISTS file_understanding (
+        repository_id    TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+        path             TEXT NOT NULL,
+        summary          TEXT NOT NULL,
+        responsibilities TEXT NOT NULL,
+        key_exports      TEXT NOT NULL,
+        collaborators    TEXT NOT NULL,
+        role             TEXT NOT NULL,
+        source           TEXT NOT NULL,
+        confidence       REAL NOT NULL,
+        content_hash     TEXT NOT NULL,
+        model            TEXT NOT NULL,
+        created_at       TEXT NOT NULL,
+        updated_at       TEXT NOT NULL,
+        PRIMARY KEY (repository_id, path)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS repo_understanding (
+        repository_id TEXT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+        summary       TEXT NOT NULL,
+        architecture  TEXT NOT NULL,
+        entry_points  TEXT NOT NULL,
+        key_modules   TEXT NOT NULL,
+        source        TEXT NOT NULL,
+        confidence    REAL NOT NULL,
+        content_hash  TEXT NOT NULL,
+        model         TEXT NOT NULL,
+        created_at    TEXT NOT NULL,
+        updated_at    TEXT NOT NULL
+    )
+    """,
 )
+
+
+# Columns added to existing tables after their initial CREATE. `CREATE TABLE IF
+# NOT EXISTS` never alters an existing table, so additive columns are applied
+# here for databases created by an earlier schema version. Each entry is
+# idempotent: the column is added only when absent.
+_ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("symbols", "decorators", "TEXT NOT NULL DEFAULT ''"),  # schema v6
+)
+
+
+def _add_missing_columns(conn: sqlite3.Connection) -> None:
+    for table, column, ddl in _ADDITIVE_COLUMNS:
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
 
 class Database:
@@ -162,6 +216,7 @@ class Database:
         with conn:
             for statement in _SCHEMA_STATEMENTS:
                 conn.execute(statement)
+            _add_missing_columns(conn)
             conn.execute(
                 "INSERT INTO schema_meta (key, value) VALUES ('schema_version', ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",

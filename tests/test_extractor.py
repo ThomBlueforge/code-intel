@@ -33,6 +33,26 @@ def test_python_functions_classes_and_methods() -> None:
     assert "attr" not in symbols
 
 
+def test_python_decorators_captured_and_normalised() -> None:
+    src = (
+        b"import functools\n\n"
+        b"class C:\n"
+        b"    @property\n"
+        b"    def size(self):\n        return 1\n\n"
+        b"    @staticmethod\n"
+        b"    def helper():\n        return 2\n\n"
+        b"@app.command('run')\n"
+        b"def serve():\n    return 0\n\n"
+        b"def plain():\n    return 3\n"
+    )
+    symbols = _by_name(SymbolExtractor().extract("Python", src))
+    assert symbols["size"].decorators == ("property",)
+    assert symbols["helper"].decorators == ("staticmethod",)
+    # Call arguments are stripped; the dotted target is kept.
+    assert symbols["serve"].decorators == ("app.command",)
+    assert symbols["plain"].decorators == ()
+
+
 def test_python_visibility_from_underscore() -> None:
     src = b"def _private():\n    pass\n\ndef public():\n    pass\n\ndef __dunder__():\n    pass\n"
     symbols = _by_name(SymbolExtractor().extract("Python", src))

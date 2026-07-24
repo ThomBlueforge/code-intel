@@ -273,7 +273,7 @@ button {
 
 .main {
   padding: var(--space-5) var(--space-4);
-  max-width: 1180px;
+  /* max-width: 1180px; */
   width: 100%;
 }
 .main-inner.enter {
@@ -618,7 +618,7 @@ button {
 }
 .modal {
   width: min(640px, 100%);
-  max-height: 80vh;
+  max-height: 400px;
   display: flex;
   flex-direction: column;
   background: var(--surface);
@@ -626,6 +626,7 @@ button {
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   overflow: hidden;
+  margin-top: 50px;
 }
 .modal-head,
 .modal-toolbar {
@@ -1059,6 +1060,380 @@ button {
   font-size: 0.72rem;
 }
 
+/* --- Symbols browser (repo-wide, searchable, sortable by LOC) ------------ */
+
+.sym-toolbar {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: var(--space-2);
+  align-items: center;
+  margin-bottom: var(--space-3);
+}
+.sym-search {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.7rem;
+}
+.sym-search:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 22%, transparent);
+}
+.sym-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: var(--step--1);
+  color: var(--faint);
+}
+.sym-sort select {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.5rem;
+}
+.sym-count {
+  color: var(--faint);
+  font-size: var(--step--1);
+}
+
+.sym-browser {
+  grid-template-columns: minmax(360px, 1fr) 1.25fr;
+}
+.sym-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  max-height: 68vh;
+}
+.sym-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 4rem minmax(0, 1fr) 4.5rem;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.sym-row:hover {
+  background: var(--surface-2);
+}
+.sym-row.is-active {
+  background: color-mix(in oklab, var(--accent) 12%, transparent);
+  border-left-color: var(--accent);
+}
+.sym-kind {
+  color: var(--static);
+  font-size: 0.68rem;
+  text-transform: lowercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sym-name {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  font-weight: 550;
+  overflow: hidden;
+}
+.sym-name-main {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sym-parent {
+  color: var(--faint);
+  font-weight: 400;
+}
+.sym-path {
+  color: var(--faint);
+  font-size: 0.68rem;
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sym-loc {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.2rem;
+}
+.sym-loc-num {
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.sym-bar {
+  width: 100%;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.sym-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--static), var(--accent));
+}
+
+.split-main {
+  min-width: 0;
+}
+.sym-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  overflow-y: auto;
+  max-height: 72vh;
+  padding-left: var(--space-3);
+  min-width: 0;
+}
+.sym-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.sym-detail-head > div:first-child {
+  min-width: 0;
+}
+.sym-detail-head .btn {
+  flex-shrink: 0;
+}
+.sym-detail-name {
+  margin: 0 0 0.3rem;
+  font-size: var(--step-1);
+  letter-spacing: -0.01em;
+}
+.sym-signature {
+  color: var(--muted);
+  font-size: 0.8rem;
+  word-break: break-word;
+}
+.sym-decorators {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.sym-meta {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.1rem 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+.sym-meta-row {
+  display: grid;
+  grid-template-columns: minmax(6rem, auto) 1fr;
+  gap: 0.75rem;
+  padding: 0.28rem 0;
+  align-items: baseline;
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 55%, transparent);
+}
+.sym-meta-row dt {
+  color: var(--faint);
+  font-size: var(--step--1);
+}
+.sym-meta-row dd {
+  margin: 0;
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+.sym-code-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.sym-code {
+  margin: 0;
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+  max-height: 32rem;
+}
+.sym-noai {
+  font-size: var(--step--1);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+
+/* --- File understanding card (what the file does + responsibilities) ------ */
+
+.fileu {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.fileu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.fileu-summary {
+  margin: 0;
+  line-height: 1.6;
+}
+.fileu-resp {
+  margin: 0;
+  padding-left: 1.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.9rem;
+}
+.fileu-resp li::marker {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.fileu-collab {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: var(--step--1);
+}
+.fileu-collab-label {
+  color: var(--faint);
+}
+.fileu-collab-item {
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.1rem 0.4rem;
+  font-size: 0.72rem;
+}
+
+/* --- Repository overview (Overview tab) ----------------------------------- */
+
+.overview-summary {
+  margin: 0 0 var(--space-3);
+  font-size: var(--step-0);
+  line-height: 1.65;
+  max-width: 70ch;
+}
+.overview-arch {
+  margin: 0 0 var(--space-3);
+  padding-left: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.overview-arch li::marker {
+  color: var(--accent);
+}
+.overview-entry {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* --- AI enrichment panel (LLM provenance = violet) ----------------------- */
+
+.enriched {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  border: 1px solid color-mix(in oklab, var(--llm) 40%, var(--border));
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  background: color-mix(in oklab, var(--llm) 6%, transparent);
+}
+.enriched-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.enriched-model {
+  color: var(--faint);
+  font-size: var(--step--1);
+}
+.enriched-summary {
+  margin: 0;
+  line-height: 1.6;
+}
+.enriched-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.enriched-block .eyebrow {
+  margin-bottom: 0.3rem;
+}
+.enriched-listing {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.84rem;
+}
+.enriched-block.is-warn .enriched-listing {
+  color: var(--warn);
+}
+.enriched-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.35rem 1.5rem;
+}
+.metric {
+  display: grid;
+  grid-template-columns: 8rem 1fr 2.5rem;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: var(--step--1);
+}
+.metric-label {
+  color: var(--muted);
+}
+.metric-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.metric-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--llm);
+}
+.metric-num {
+  text-align: right;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
 .source-modal {
   width: min(980px, 100%);
   max-height: 86vh;
@@ -1294,6 +1669,35 @@ button {
   margin: 0;
   font-size: var(--step--1);
   color: var(--faint);
+}
+.ask-examples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+.ask-examples-label {
+  font-size: var(--step--1);
+  color: var(--faint);
+}
+.ask-chip {
+  font: inherit;
+  font-size: var(--step--1);
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.25rem 0.7rem;
+  cursor: pointer;
+  transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.ask-chip:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.ask-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .answer-text {
   white-space: pre-wrap;

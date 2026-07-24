@@ -88,6 +88,40 @@ def test_enrich_repository_persists_separately_joinable_by_symbol_id(tmp_path: P
     assert stored.summary == "Authenticates a user."
 
 
+class CapturingChatClient:
+    """Records every user prompt it is asked to complete."""
+
+    def __init__(self, response: str) -> None:
+        self._response = response
+        self.prompts: list[str] = []
+
+    def complete(self, messages: list[ChatMessage]) -> str:
+        self.prompts.append(messages[-1].content)
+        return self._response
+
+
+def test_enrichment_prompt_includes_structural_context(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "auth.py").write_text(
+        "def authenticate(user):\n    return validate(user)\n\n"
+        "def validate(user):\n    return True\n",
+        encoding="utf-8",
+    )
+    settings = Settings.for_repository(repo, db_path=tmp_path / "index.db")
+    Indexer(settings).index(repo)
+    client = CapturingChatClient(_GOOD_RESPONSE)
+    with Database(settings.db_path) as db:
+        conn = db.connection
+        row = RepositoryStore(conn).get_by_path(str(repo.resolve()))
+        assert row is not None
+        Enricher(conn, client, "test-model").enrich_repository(row.id)
+    blob = "\n".join(client.prompts)
+    assert "Structural context" in blob
+    assert "Calls: validate" in blob  # authenticate -> validate
+    assert "Called by: authenticate" in blob  # validate <- authenticate
+
+
 def test_malformed_response_degrades_to_unknown(tmp_path: Path) -> None:
     settings, repo_id = _indexed(tmp_path)
     client = FakeChatClient("the model rambled without any JSON")

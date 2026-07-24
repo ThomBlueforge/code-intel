@@ -91,11 +91,11 @@ class LLMSettings:
     Never hardcode these at a call site.
     """
 
-    base_url: str = "http://localhost:5000/v1"
+    base_url: str = "http://localhost:5001/v1"
     api_key: str = "not-needed-for-local"
     model: str = "local-model"
     temperature: float = 0.0
-    max_tokens: int = 1024
+    max_tokens: int = 4096
     request_timeout_s: float = 120.0
     max_retries: int = 3
     batch_size: int = 8

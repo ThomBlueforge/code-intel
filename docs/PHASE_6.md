@@ -37,7 +37,7 @@ OpenAI-compatible endpoint:
 
 ```bash
 uv run code-intel enrich /path/to/repo \
-  --base-url http://localhost:5000/v1 --model my-local-model --limit 50
+  --base-url http://localhost:5001/v1 --model my-local-model --limit 50
 ```
 
 The enricher takes a `ChatClient`, so tests inject a fake and need no network;
