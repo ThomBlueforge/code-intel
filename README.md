@@ -20,6 +20,32 @@ engineers.
   (static analysis vs. LLM inference) and a confidence score.
 - **Three ways in** — a CLI, a FastAPI HTTP service, and a browser UI.
 
+## Screenshots
+
+The browser UI, running against a small indexed repository. Everything shown here
+is also reachable from the CLI and the HTTP API.
+
+**Overview** — what the project is, synthesised bottom-up from the code, next to
+the deterministic counts (files, symbols, call and import edges, cycles, findings).
+
+![Overview: codebase comprehension summary and repository statistics](docs/screenshots/overview.png)
+
+**Symbols** — every indexed symbol, searchable and sortable, with the per-file
+explanation, its collaborators, and the optional AI enrichment (layer,
+responsibilities, quality scores) side by side.
+
+![Symbols browser with per-symbol AI enrichment and quality scores](docs/screenshots/symbols.png)
+
+**Impact** — change-impact analysis for a symbol: definitions, direct and indirect
+callers, affected files, modules, and tests.
+
+![Change impact analysis for the run symbol](docs/screenshots/impact.png)
+
+**Ask** — grounded Q&A over the repository. With the LLM off it returns the cited
+context an answer would be grounded in, so the retrieval layer stays inspectable.
+
+![Grounded Q&A panel with example questions](docs/screenshots/ask.png)
+
 ## Core principle
 
 Deterministic analysis (facts) and AI reasoning (understanding) are always
@@ -160,7 +186,7 @@ src/code_intel/      # library, CLI, and HTTP API
   cli/  api/  webui/   (webui holds the generated UI)
 tests/               # unit, integration, and API tests
 web/                 # Next.js frontend (source)
-docs/                # architecture and component notes
+docs/                # architecture and component notes (+ screenshots/)
 ```
 
 ## License
