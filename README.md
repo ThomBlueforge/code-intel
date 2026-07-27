@@ -165,4 +165,4 @@ docs/                # architecture and component notes
 
 ## License
 
-Released under the [MIT License](LICENSE). Copyright © 2026 Thomas Ben.
+Released under the [MIT License](LICENSE). Copyright © 2026 Blueforge.
